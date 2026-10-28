@@ -1,8 +1,9 @@
-"""Offline tests for the Maxi JSON-LD extraction (no browser, no network)."""
+"""Offline tests for the PCX JSON-LD extraction (no browser, no network)."""
 
 import json
 
-from price_getter.sources.maxi import extract_products_from_html, search_url
+from price_getter.sources.maxi import MAXI
+from price_getter.sources.pcx import SUPERSTORE, extract_products_from_html, search_url
 
 # Mirror of the real page's structures: a WebPage block with a ProductCollection
 # nested under mainEntity, a second top-level collection, an unavailable
@@ -83,9 +84,20 @@ _PAGE = """
 
 def test_search_url_quotes_french_terms():
     assert (
-        search_url("boeuf haché")
+        search_url(MAXI, "boeuf haché")
         == "https://www.maxi.ca/fr/search?search-bar=boeuf+hach%C3%A9&sort=relevance"
     )
+
+
+def test_superstore_uses_english_search_and_its_origin():
+    url = search_url(SUPERSTORE, "ground beef")
+    assert url == (
+        "https://www.realcanadiansuperstore.ca/en/search?search-bar=ground+beef&sort=relevance"
+    ), "superstore needs origin realcanadiansuperstore.ca, not superstore.ca (BFF rejects it)"
+    headers = SUPERSTORE.headers()
+    assert headers["Origin"] == "https://www.realcanadiansuperstore.ca"
+    assert headers["site-banner"] == "superstore"
+    assert headers["Accept-Language"] == "en"
 
 
 def test_extracts_products_from_nested_and_top_level_collections():
