@@ -55,6 +55,9 @@ jobs:
         working-directory: price-getter
         run: uv run playwright install --with-deps chromium
 
+      - name: Install virtual display (headed Chromium passes Akamai, headless doesn't)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq xvfb
+
       - name: Run pipeline
         working-directory: price-getter
-        run: uv run price-getter
+        run: xvfb-run -a uv run price-getter
