@@ -1,0 +1,33 @@
+name: price-getter
+
+on:
+  schedule:
+    - cron: "30 4 * * *" # nightly (UTC); use "30 4 */2 * *" for bi-nightly
+  workflow_dispatch:
+
+jobs:
+  pull-prices:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: price-getter/uv.lock
+
+      - name: Sync dependencies (incl. embedding model extra)
+        working-directory: price-getter
+        run: uv sync --extra matching
+
+      - name: Install Playwright browser
+        working-directory: price-getter
+        run: uv run playwright install --with-deps chromium
+
+      - name: Run pipeline
+        working-directory: price-getter
+        run: uv run price-getter
