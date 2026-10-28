@@ -28,6 +28,8 @@ def _snapshot(url: str) -> dict:
                         WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
                     """)
                 )
+                # alembic_version is migration bookkeeping, not declared schema
+                if r[0] != "alembic_version"
             )
             columns: dict[str, dict[str, tuple]] = {}
             for r in conn.execute(
@@ -36,7 +38,7 @@ def _snapshot(url: str) -> dict:
                            column_default, numeric_precision, numeric_scale,
                            character_maximum_length
                     FROM information_schema.columns
-                    WHERE table_schema = 'public'
+                    WHERE table_schema = 'public' AND table_name != 'alembic_version'
                     ORDER BY table_name, ordinal_position
                 """)
             ):

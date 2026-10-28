@@ -41,19 +41,22 @@ def seeded_db():
 
 def test_nearby_filters_by_radius_and_orders_by_distance(seeded_db) -> None:
     # In CI, DATABASE_URL and TEST_DATABASE_URL point at the same database,
-    # so the app under test reads the store we seeded via SQL directly
+    # so the app under test reads the store we seeded via SQL directly.
+    # Query from a distinct point (~700 m from 'Corner Market') so the distance
+    # math is truly exercised, not a degenerate identical-point query.
     client = TestClient(from_api_under_test())
 
-    resp = client.get("/stores/nearby", params={"lat": 43.6532, "lon": -79.3832, "radius_km": 10})
+    resp = client.get("/stores/nearby", params={"lat": 43.6577, "lon": -79.3892, "radius_km": 10})
     assert resp.status_code == 200
     stores = resp.json()
 
     assert [s["name"] for s in stores] == ["Corner Market"], (
         "expected only the in-radius store: an extra store or wrong ordering crept in"
     )
-    assert 0 < stores[0]["distance_km"] < 1.0
-    assert stores[0]["lat"] == pytest.approx(43.6532)
-    assert stores[0]["lon"] == pytest.approx(-79.3832)
+    distance = stores[0]["distance_km"]
+    assert 0 < distance < 1.0, f"query point should be sub-1km from the store, got {distance}"
+    assert stores[0]["lat"] == pytest.approx(43.6532, abs=1e-6)
+    assert stores[0]["lon"] == pytest.approx(-79.3832, abs=1e-6)
 
 
 def from_api_under_test():
