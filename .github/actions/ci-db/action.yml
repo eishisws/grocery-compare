@@ -21,14 +21,20 @@ runs:
       shell: bash
 
     - name: Wait until ready
+      # The official postgres entrypoint boots a temporary setup server, then
+      # RESTARTS into the real one. pg_isready alone succeeds against the
+      # temporary server and we'd race the entrypoint mid-setup, so wait for
+      # the "ready to accept connections" log line to appear TWICE.
       run: |
-        for i in $(seq 1 60); do
-          if docker exec ci-grocery-db pg_isready -U postgres -d ci_grocery >/dev/null 2>&1; then
+        for i in $(seq 1 120); do
+          ready_count=$(docker logs ci-grocery-db 2>&1 | grep -c "database system is ready to accept connections" || true)
+          if [ "$ready_count" -ge 2 ] && docker exec ci-grocery-db pg_isready -U postgres -d ci_grocery >/dev/null 2>&1; then
             exit 0
           fi
           sleep 1
         done
-        echo "Postgres did not become ready in time"
+        echo "Postgres did not become ready in time — last logs:"
+        docker logs ci-grocery-db 2>&1 | tail -20
         exit 1
       shell: bash
 
