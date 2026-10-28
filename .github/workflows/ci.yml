@@ -5,36 +5,102 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  python:
+  # ─── Gate 1: architecture contract ────────────────────────────────────────
+  # The two prongs must stay independent; the database is their only link.
+  isolation:
+    name: prong isolation
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        project: [api, price-getter]
-    defaults:
-      run:
-        working-directory: ${{ matrix.project }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: No cross-prong imports (api ↔ price-getter)
+        run: python3 .github/scripts/check_isolation.py
+
+  # ─── Gate 2: source-of-truth parity ───────────────────────────────────────
+  # Alembic's final state is diffed against schema.sql (tables, columns,
+  # types, nullability, defaults, indexes). Drift in either direction fails.
+  database:
+    name: database — migration parity vs schema.sql
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-          cache-dependency-glob: ${{ matrix.project }}/uv.lock
+          cache-dependency-glob: database/uv.lock
 
-      - name: Sync dependencies
-        run: uv sync
+      - uses: ./.github/actions/ci-db
 
-      - name: Lint (ruff)
+      - name: Build migrations on a scratch DB (alembic head)
+        working-directory: database
+        run: DATABASE_URL="$PARITY_DB_LIVE" uv run alembic upgrade head
+
+      - name: Lint
+        working-directory: database
         run: |
           uv run ruff check .
           uv run ruff format --check .
 
-      - name: Test (pytest)
-        run: uv run pytest
+      - name: Parity gate (alembic head == schema.sql)
+        working-directory: database
+        run: uv run pytest -q
+
+  # ─── Gate 3: prong checked independently against the source of truth ──────
+  # Client-facing reads: distance filtering + ordering via real PostGIS.
+  api:
+    name: api — lint + unit + PostGIS integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: api/uv.lock
+
+      - uses: ./.github/actions/ci-db
+
+      - name: Lint (ruff)
+        working-directory: api
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+      - name: Tests (unit + integration against the live DB)
+        working-directory: api
+        run: uv run pytest -q
+
+  # Write side: idempotent upserts into a real Postgres+pgvector.
+  price-getter:
+    name: price-getter — lint + unit + write-path integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: price-getter/uv.lock
+
+      - uses: ./.github/actions/ci-db
+
+      - name: Lint (ruff)
+        working-directory: price-getter
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+      - name: Tests (unit + integration against the live DB)
+        working-directory: price-getter
+        run: uv run pytest -q
 
   frontend:
+    name: frontend — type-check + build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -50,4 +116,5 @@ jobs:
 
       - run: npm ci
 
-      - run: npm run build
+      - name: Build (TypeScript errors fail here)
+        run: npm run build

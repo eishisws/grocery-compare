@@ -1,0 +1,50 @@
+name: ci-db
+description: >-
+  Boots a disposable Postgres (PostGIS + pgvector + pg_trgm), applies
+  schema.sql (the source of truth) and exports connection URLs for prong
+  tests: DATABASE_URL, TEST_DATABASE_URL, PARITY_DB_REFERENCE, PARITY_DB_LIVE.
+runs:
+  using: composite
+  steps:
+    - name: Build source-of-truth image (PostGIS + pgvector)
+      run: docker build -t ci-grocery-db database/docker
+      shell: bash
+
+    - name: Boot database
+      run: |
+        docker rm -f ci-grocery-db >/dev/null 2>&1 || true
+        docker run -d --name ci-grocery-db \
+          -e POSTGRES_PASSWORD=postgres \
+          -e POSTGRES_DB=ci_grocery \
+          -p 5432:5432 \
+          ci-grocery-db
+      shell: bash
+
+    - name: Wait until ready
+      run: |
+        for i in $(seq 1 60); do
+          if docker exec ci-grocery-db pg_isready -U postgres -d ci_grocery >/dev/null 2>&1; then
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "Postgres did not become ready in time"
+        exit 1
+      shell: bash
+
+    - name: Apply source of truth (schema.sql)
+      run: |
+        docker exec -i ci-grocery-db psql -U postgres -d ci_grocery -v ON_ERROR_STOP=1 < database/schema.sql
+        # scratch DBs for the alembic-vs-schema.sql parity gate
+        docker exec ci-grocery-db psql -U postgres -c "CREATE DATABASE parity_reference;"
+        docker exec ci-grocery-db psql -U postgres -c "CREATE DATABASE parity_alembic;"
+        docker exec -i ci-grocery-db psql -U postgres -d parity_reference -v ON_ERROR_STOP=1 < database/schema.sql
+      shell: bash
+
+    - name: Export connection URLs
+      run: |
+        echo "DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/ci_grocery" >> "$GITHUB_ENV"
+        echo "TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/ci_grocery" >> "$GITHUB_ENV"
+        echo "PARITY_DB_REFERENCE=postgresql+psycopg://postgres:postgres@localhost:5432/parity_reference" >> "$GITHUB_ENV"
+        echo "PARITY_DB_LIVE=postgresql+psycopg://postgres:postgres@localhost:5432/parity_alembic" >> "$GITHUB_ENV"
+      shell: bash

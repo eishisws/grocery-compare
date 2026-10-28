@@ -5,6 +5,7 @@
 
 CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_trgm; -- fuzzy/similarity name matching
 
 CREATE TABLE IF NOT EXISTS stores (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -35,4 +36,3 @@ CREATE TABLE IF NOT EXISTS products (
 
 CREATE INDEX IF NOT EXISTS products_store_gix ON products (store_id);
 CREATE INDEX IF NOT EXISTS products_name_gix ON products USING GIN (name gin_trgm_ops);
--- gin_trgm_ops requires: CREATE EXTENSION IF NOT EXISTS pg_trgm;

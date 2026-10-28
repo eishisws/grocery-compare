@@ -1,0 +1,109 @@
+name: CD
+
+# Deploy pipeline for main. Every job is opt-in via a repository *variable*
+# (Settings → Secrets and variables → Actions → Variables tab) so the workflow
+# is inert until you hook each host up:
+#
+#   DEPLOY_MIGRATIONS=true  +  PROD_DATABASE_URL   (secret)  → run alembic first
+#   DEPLOY_API=true         +  RENDER_DEPLOY_HOOK_URL     → render.com hook
+#   DEPLOY_FRONTEND=true    +  VERCEL_TOKEN/ORG/PROJECT    → vercel app
+#   API_HEALTH_URL                             (variable) → post-deploy smoke
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: cd-production
+  cancel-in-progress: false # deploy only one commit's config at a time
+
+jobs:
+  migrate:
+    name: migrations beat deploys
+    # The database changes before any new client code ships — the API and the
+    # price-getter both read/write it, so schema first, always.
+    if: ${{ vars.DEPLOY_MIGRATIONS == 'true' }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: database/uv.lock
+
+      - name: alembic upgrade head against production
+        working-directory: database
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+        run: |
+          uv sync
+          uv run alembic upgrade head
+          # fail the deploy if the contract still isn't in place
+          uv run scripts/verify_source_of_truth.py
+
+  frontend:
+    name: frontend → Vercel
+    # deploy only when migrations succeeded (or the migration job is opted out)
+    if: >-
+      ${{ vars.DEPLOY_FRONTEND == 'true' &&
+          (needs.migrate.result == 'success' || needs.migrate.result == 'skipped') }}
+    needs: migrate
+    runs-on: ubuntu-latest
+    environment: production
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Deploy to Vercel
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          npx vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN"
+          npx vercel@latest build --prod --token="$VERCEL_TOKEN"
+          npx vercel@latest deploy --prebuilt --prod --token="$VERCEL_TOKEN"
+
+  api:
+    name: api → Render (+ smoke test)
+    if: >-
+      ${{ vars.DEPLOY_API == 'true' &&
+          (needs.migrate.result == 'success' || needs.migrate.result == 'skipped') }}
+    needs: migrate
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Trigger Render deploy hook
+        run: curl -fsS --retry 3 --retry-delay 5 -X POST "$RENDER_DEPLOY_HOOK_URL"
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+
+      - name: Post-deploy smoke test (/health)
+        if: ${{ vars.API_HEALTH_URL != '' }}
+        run: |
+          for i in $(seq 1 12); do
+            if curl -fsS "$API_HEALTH_URL" | grep -q '"status":"ok"'; then
+              echo "API healthy after deploy"
+              exit 0
+            fi
+            echo "attempt $i/12 — waiting for cold start..."
+            sleep 10
+          done
+          echo "API did not report healthy after deploy"
+          exit 1
+        env:
+          API_HEALTH_URL: ${{ vars.API_HEALTH_URL }}

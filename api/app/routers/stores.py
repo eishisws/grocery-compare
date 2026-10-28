@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.db import engine
+from app.db import get_engine
 
 router = APIRouter(prefix="/stores", tags=["stores"])
 
@@ -50,7 +50,7 @@ def nearby_stores(
 ) -> list[StoreOut]:
     """Stores within `radius_km` of a point, sorted by distance."""
     try:
-        with engine.connect() as conn:
+        with get_engine().connect() as conn:
             rows = conn.execute(
                 NEARBY_SQL, {"lat": lat, "lon": lon, "radius_km": radius_km, "limit": limit}
             )

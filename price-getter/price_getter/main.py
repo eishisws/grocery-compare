@@ -4,7 +4,7 @@ Steps, in order:
 1. scrape     -> raw product records per store      (scraping.py, per-source)
 2. normalize  -> names + unit-price math             (units.py)
 3. match      -> embeddings + LLM verdicts           (matching.py)
-4. persist    -> upsert products into Postgres       (db.py)
+4. persist    -> idempotent upserts into Postgres    (persist.py)
 
 Nothing here talks to the API prong: Postgres is the only shared interface.
 """

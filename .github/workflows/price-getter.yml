@@ -5,10 +5,34 @@ on:
     - cron: "30 4 * * *" # nightly (UTC); use "30 4 */2 * *" for bi-nightly
   workflow_dispatch:
 
+concurrency:
+  group: price-getter
+  cancel-in-progress: false # never overlap scrape runs writing the same rows
+
 jobs:
-  pull-prices:
+  # Guard the source of truth before any scrape writes to it: a half-migrated
+  # production database must abort the run, not corrupt the contract.
+  guard:
+    name: source-of-truth guard
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: database/uv.lock
+
+      - name: Verify extensions + tables exist (fails the run if not)
+        working-directory: database
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: uv run scripts/verify_source_of_truth.py
+
+  pull-prices:
+    needs: guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
