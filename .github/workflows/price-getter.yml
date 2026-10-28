@@ -36,6 +36,9 @@ jobs:
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      # optional: any OpenAI-compatible free provider (Groq / Gemini / OpenRouter)
+      LLM_MODEL: ${{ vars.LLM_MODEL }}
+      LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
     steps:
       - uses: actions/checkout@v4
 

@@ -51,7 +51,10 @@ def llm_settle(item_name: str, candidates: list[dict]) -> dict | None:
     contains an item the store doesn't stock).
     """
     settings = get_settings()
-    client = OpenAI(api_key=settings.openai_api_key or None)
+    client = OpenAI(
+        api_key=settings.openai_api_key or None,
+        base_url=settings.llm_base_url or None,  # non-OpenAI providers
+    )
     prompt = (
         "Shopping list item: "
         f'"{item_name}"\n'
