@@ -55,7 +55,9 @@ def _snapshot(url: str) -> dict:
             for r in conn.execute(
                 text("""
                     SELECT tablename, indexname FROM pg_indexes
-                    WHERE schemaname = 'public' AND indexname NOT LIKE '%_pkey'
+                    WHERE schemaname = 'public'
+                      AND tablename != 'alembic_version'
+                      AND indexname NOT LIKE '%_pkey'
                     ORDER BY tablename, indexname
                 """)
             ):
