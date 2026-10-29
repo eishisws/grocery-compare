@@ -9,10 +9,14 @@ Reverse-engineering notes, verified live 2026-10-28:
   ProductCollection with full product info (name, price, currency, sku,
   brand, image). No product XHR fires; the grid is in the document itself.
 - Plain httpx GETs against those sites are Akamai-blocked (403), so pages
-  are fetched with Playwright Chromium in HEADED mode (headless Chromium
-  gets "Access Denied"). In CI the nightly job runs under xvfb. Be POLITE:
-  one browser per run at a measured pace does not trip the shared platform
-  flag; a dozen rapid launches in an hour does (we verified the hard way).
+  are fetched with a real (headed) site: Playwright persistent profile
+  (cookies survive across nightly runs, so the scraper reads as a returning
+  visitor), the user's installed Edge on Windows, and automation flags
+  suppressed. Headless Chromium gets "Access Denied" immediately. In CI the
+  nightly job runs under xvfb. Be POLITE: one browser per run at a measured
+  pace does not trip the shared platform flag; a dozen rapid launches in an
+  hour does (we verified the hard way), and a live IP flag needs 24-48 h
+  to expire - do not retry in a loop.
 - The pcx-bff API (api.pcexpress.ca) accepts the app-level headers below
   with no Bearer token; `Origin` must match an allow-listed banner domain.
   PCX storeIds are Loblaws' legacy numbering — database rows keep their own
@@ -24,7 +28,9 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import pathlib
 import re
+import sys
 import time
 import urllib.parse
 from collections.abc import Iterator
@@ -171,6 +177,29 @@ def _brand_name(brand: Any) -> str | None:
     return None
 
 
+# Persistent browser profile on the user's real machine: cookies (including
+# Akamai's _abck/_bm_sv sensor cookies) survive between runs, so the nightly
+# scrape looks like a RETURNING visitor instead of a fresh anonymous browser.
+# LocalAutomation fingerprints are suppressed too: real Edge channel on
+# Windows, navigator.webdriver removed, and no `--enable-automation` flag.
+_PROFILE_DIR = pathlib.Path.home() / ".grocery-compare" / "browser-profile"
+
+
+def _launch_context(p, banner: PCXBanner):
+    _PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    kwargs: dict[str, Any] = {
+        "headless": False,
+        "locale": banner.playwright_locale,
+        "args": ["--disable-blink-features=AutomationControlled"],
+        "ignore_default_args": ["--enable-automation"],
+    }
+    if sys.platform == "win32":
+        # The user's actual installed Edge — closer to a real visitor than the
+        # bundled Playwright Chromium (which ships a distinguishable build).
+        kwargs["channel"] = "msedge"
+    return p.chromium.launch_persistent_context(str(_PROFILE_DIR), **kwargs)
+
+
 @contextlib.contextmanager
 def pcx_search(banner: PCXBanner, *, pause_seconds: float = 3.0) -> Iterator[Any]:
     """Yield `fetch(query) -> list[product dict]` backed by a real browser.
@@ -183,9 +212,9 @@ def pcx_search(banner: PCXBanner, *, pause_seconds: float = 3.0) -> Iterator[Any
     from playwright.sync_api import sync_playwright  # lazy: heavy startup
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
+        context = _launch_context(p, banner)
         try:
-            page = browser.new_context(locale=banner.playwright_locale).new_page()
+            page = context.new_page()
 
             def fetch(query: str, *, max_wait_seconds: float = 15.0) -> list[dict[str, Any]]:
                 log.info("pcx[%s]: fetching search page for %r", banner.key, query)
@@ -211,4 +240,4 @@ def pcx_search(banner: PCXBanner, *, pause_seconds: float = 3.0) -> Iterator[Any
 
             yield fetch
         finally:
-            browser.close()
+            context.close()
