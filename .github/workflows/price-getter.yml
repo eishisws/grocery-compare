@@ -58,6 +58,20 @@ jobs:
       - name: Install virtual display (headed Chromium passes Akamai, headless doesn't)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq xvfb
 
+      # Scrapes default to the LOCAL scheduled task (price-getter/scripts/
+      # run_nightly.ps1): Akamai blocks GitHub-hosted datacenter IPs at the
+      # door — every page 403s within ~60 ms, browser fingerprint irrelevant.
+      # Set repo variable ALLOW_GH_SCRAPES=1 to attempt a GH-hosted scrape
+      # anyway (only useful behind a residential proxy).
       - name: Run pipeline
+        if: vars.ALLOW_GH_SCRAPES == '1'
         working-directory: price-getter
         run: xvfb-run -a uv run price-getter
+
+      - name: Explain why the scrape step is skipped by default
+        if: vars.ALLOW_GH_SCRAPES != '1'
+        run: |
+          echo "Nightly scrapes run LOCALLY: price-getter/scripts/run_nightly.ps1"
+          echo "(GitHub Actions datacenter IPs are Akamai-blocked instantly —"
+          echo "headless, headed, xvfb, all irrelevant. The IP is the fingerprint.)"
+          echo "To override, set repo variable ALLOW_GH_SCRAPES=1."
